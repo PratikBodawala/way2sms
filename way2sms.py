@@ -2,7 +2,7 @@ import getpass
 import urllib
 import textwrap
 import requests
-# this is base url for way2sms
+import time
 url = 'http://www.way2sms.com'
 
 
@@ -12,27 +12,33 @@ class Way2sms(object):
         self.ses.headers.update({'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Cache-Control': 'no-cache', 'Upgrade-Insecure-Requests': '1', 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36', 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8', 'DNT': '1', 'Accept-Encoding': 'gzip, deflate', 'Accept-Language': 'en-US,en;q=0.8'})
         response = self.ses.get(url)
         self.new_url = response.url
-        # new_url is redirected url
         usr = str(raw_input('Enter your mobile number:'))
         pas = getpass.getpass()
-        if self.ses.post(self.new_url+'Login1.action', 'username='+usr+'&password='+str(pas)).ok:
+        if self.ses.post(self.new_url+'Login1.action', 'username='+str(usr)+'&password='+str(pas)).ok:
             print "Login successfully"
         else:
             print "Login failed"
+        self.token = self.ses.cookies['JSESSIONID']
+        self.token = self.token[4:]
 
     def sms(self, **kwargs):
-        # textwrap.wrap(string, 140)
-        mobile=str(raw_input('Enter mobile number: '))
-        string = str(raw_input('Enter content: '))
-        msglen = len(string)
-        string = urllib.quote(string)
-        token = self.ses.cookies['JSESSIONID']
-        token = token[4:]
-        print self.ses.post(self.new_url+'smstoss.action', 'ssaction=ss&Token='+str(token)+'&mobile='+str(mobile)+'&message='+string+'&msgLen='+str(140-msglen)).status_code
-
-        print string
+        if 'mobile' not in kwargs:
+            mobile = str(raw_input('Send sms to: '))
+        else:
+            mobile = kwargs['mobile']
+        if 'string' not in kwargs:
+            string = str(raw_input('Enter TEXT SMS: '))
+        else:
+            string = kwargs['string']
+        if type(mobile) is int:
+            mobile = list(str(mobile).split())
+        if type(mobile) is list:
+            for mobile_no in mobile:
+                lofstr = textwrap.wrap(string, 140)
+                for string in lofstr:
+                    msglen = len(string)
+                    qstring = urllib.quote(string)
+                    self.ses.post(self.new_url+'smstoss.action', 'ssaction=ss&Token='+str(self.token)+'&mobile='+str(mobile_no)+'&message='+qstring+'&msgLen='+str(140-msglen))
+                    time.sleep(3)
 if __name__ == '__main__':
-    w = Way2sms().sms()
-    # string = str(raw_input('Enter content: '))
-    # print string
-    # print urllib.quote(string)
+    Way2sms().sms()
