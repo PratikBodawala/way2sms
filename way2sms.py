@@ -80,9 +80,13 @@ class Way2sms(object):
                 for string in lofstr:
                     msglen = len(string)
                     qstring = urllib.quote(string)
-                    self.ses.post(self.new_url+'smstoss.action', 'ssaction=ss&Token='+str(self.token)+'&mobile='+str(mobile_no)+'&message='+qstring+'&msgLen='+str(140-msglen))
+                    page = self.ses.post(self.new_url+'smstoss.action', 'ssaction=ss&Token='+str(self.token)+'&mobile='+str(mobile_no)+'&message='+qstring+'&msgLen='+str(140-msglen)).text
                     time.sleep(3)
-                print mobile_no, 'sent successfully.'
+                    if "Rejected : Can't submit your message, finished your day quota." not in page:
+                        print mobile_no, 'sent successfully.'
+                    else:
+                        print 'quota finished!'
+                        sys.exit(1)
 
     def history(self, day):
         date = (datetime.date.today() - datetime.timedelta(days=int(day))).strftime('%d/%m/%Y')
