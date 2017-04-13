@@ -10,15 +10,13 @@ from prettytable import PrettyTable
 from prettytable import ALL as ALL
 import cPickle as pickle
 import sys
+sys.stdout.flush()
 url = 'http://www.way2sms.com'
 
 
 class Way2sms(object):
     """mobile and string are keywords parameter of sms method."""
     def __init__(self):
-        self.ses = None
-        response = requests.get(url)
-        self.new_url = response.url
         if os.path.exists('.token'):
             with open('.token', 'r') as Token:
                 self.ses, self.token, self.new_url = pickle.load(Token)
@@ -28,7 +26,8 @@ class Way2sms(object):
 
             else:
                 print 'session expired'
-                self.token = None
+                response = requests.head(url, allow_redirects=True)
+                self.new_url = response.url
                 self.ses = requests.session()
                 self.ses.headers.update({'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Cache-Control': 'no-cache', 'Upgrade-Insecure-Requests': '1', 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36', 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8', 'DNT': '1', 'Accept-Encoding': 'gzip, deflate', 'Accept-Language': 'en-US,en;q=0.8'})
                 usr = str(raw_input('Enter your mobile number:'))
@@ -43,7 +42,8 @@ class Way2sms(object):
                     print "Login failed"
 
         else:
-            self.token = None
+            response = requests.head(url, allow_redirects=True)
+            self.new_url = response.url
             self.ses = requests.session()
             self.ses.headers.update({'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Cache-Control': 'no-cache',
                                      'Upgrade-Insecure-Requests': '1',
@@ -72,27 +72,35 @@ class Way2sms(object):
             string = str(raw_input('Enter TEXT SMS: '))
         else:
             string = kwargs['string']
-        if type(mobile) is int:
-            mobile = list(str(mobile).split())
+        if type(mobile) is str:
+            mobile = list(str(mobile).split(','))
         if type(mobile) is list:
             for mobile_no in mobile:
-                lofstr = textwrap.wrap(string, 140)
-                for string in lofstr:
-                    msglen = len(string)
-                    qstring = urllib.quote(string)
-                    page = self.ses.post(self.new_url+'smstoss.action', 'ssaction=ss&Token='+str(self.token)+'&mobile='+str(mobile_no)+'&message='+qstring+'&msgLen='+str(140-msglen)).text
-                    time.sleep(3)
-                    if "Rejected : Can't submit your message, finished your day quota." not in page:
-                        print mobile_no, 'sent successfully.'
-                    else:
-                        print 'quota finished!'
-                        sys.exit(1)
+                if len(mobile_no) is not 10:
+                    print mobile_no, 'is not valid'
+                else:
+                    lofstr = textwrap.wrap(string, 140)
+                    for string in lofstr:
+                        msglen = len(string)
+                        qstring = urllib.quote(string)
+                        page = self.ses.post(self.new_url+'smstoss.action', 'ssaction=ss&Token='+str(self.token)+'&mobile='+str(mobile_no)+'&message='+qstring+'&msgLen='+str(140-msglen)).text
+                        print 'Sending SMS to', mobile_no,
+                        for dot in range(3):
+                            print '.',
+                            time.sleep(1)
+                        if "Rejected : Can't submit your message, finished your day quota." not in page:
+                            if self.successfully_sent(mobile_no, string):
+                                print 'sent successfully.'
+                            else:
+                                print 'failed to send.'
+                        else:
+                            print 'quota finished!'
+                            sys.exit(1)
 
     def history(self, day):
         date = (datetime.date.today() - datetime.timedelta(days=int(day))).strftime('%d/%m/%Y')
         page = self.ses.post(self.new_url+'sentSMS.action?dt='+str(date)+'&Token='+str(self.token))
         soup = BeautifulSoup(page.text, 'html.parser')
-        # print soup.prettify()
         part = soup.find_all('div', {'class': 'mess'})
         print 'SMS history for date:', date
         table = PrettyTable(hrules=ALL)
@@ -106,6 +114,19 @@ class Way2sms(object):
             table.add_row([time, no, p])
         print table
 
+    def successfully_sent(self, mobile, text):
+        date = datetime.date.today().strftime('%d/%m/%Y')
+        page = self.ses.post(self.new_url + 'sentSMS.action?dt=' + str(date) + '&Token=' + str(self.token))
+        soup = BeautifulSoup(page.text, 'html.parser')
+        first = soup.find('div', {'class': 'mess'})
+        no = str(first.find('b').text)
+        divrb = first.find('div', {'class': 'rb'})
+        p = str(divrb.find('p').text)
+        if (no == mobile) and (p == text):
+            return True
+        else:
+            return False
+
     def logout(self):
         self.ses.get(self.new_url+'main.action')
         try:
@@ -113,14 +134,15 @@ class Way2sms(object):
         finally:
             print 'Log-out!'
             sys.exit(0)
+
     def check_limit(self):
         date = datetime.date.today().strftime('%d/%m/%Y')
         page = self.ses.post(self.new_url + 'sentSMS.action?dt=' + str(date) + '&Token=' + str(self.token))
         soup = BeautifulSoup(page.text, 'html.parser')
-        # print soup.prettify()
         sms = len(soup.find_all('div', {'class': 'mess'}))
         print 'You have {} sms left.'.format(100 - sms)
 
 if __name__ == '__main__':
-    Way2sms().check_limit()
+    Way2sms().sms()
+    # Way2sms().check_limit()
     # Way2sms().history(13)
