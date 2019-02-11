@@ -1,148 +1,165 @@
-import getpass
-import urllib
+import json
+from getpass import getpass
 import textwrap
 import requests
-import time
 import os
 import datetime
 from bs4 import BeautifulSoup
-from prettytable import PrettyTable
-from prettytable import ALL as ALL
-import cPickle as pickle
+from prettytable import PrettyTable, ALL
+import pickle
 import sys
+import re
+
 sys.stdout.flush()
 url = 'http://www.way2sms.com'
 
 
+class SessionExpiredException(Exception):
+    msg = "Session Expired"
+
+
 class Way2sms(object):
     """mobile and string are keywords parameter of sms method."""
-    def __init__(self):
-        if os.path.exists('.token'):
-            with open('.token', 'r') as Token:
-                self.ses, self.token, self.new_url = pickle.load(Token)
-            page = self.ses.get(self.new_url+'ebrdg?id='+self.token).text
-            if 'Welcome to Way2SMS' in page:
-                print 'session is ok'
 
+    def __init__(self):
+        try:
+            with open('.token', 'rb') as Token:
+                self.ses, self.token = pickle.load(Token)
+            page = self.ses.get(url + '/send-sms').text
+            login_page = re.findall(r'<small>welcome</small>\s+<div class="user-title">(?P<user>[\w ]+)</div>', page)
+            if len(login_page) is not 0:
+                print('Welcome,', login_page[0])
             else:
-                print 'session expired'
-                response = requests.head(url, allow_redirects=True)
-                self.new_url = response.url
-                self.ses = requests.session()
-                self.ses.headers.update({'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Cache-Control': 'no-cache', 'Upgrade-Insecure-Requests': '1', 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36', 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8', 'DNT': '1', 'Accept-Encoding': 'gzip, deflate', 'Accept-Language': 'en-US,en;q=0.8'})
-                usr = str(raw_input('Enter your mobile number:'))
-                pas = getpass.getpass()
-                if self.ses.post(self.new_url + 'Login1.action', 'username=' + str(usr) + '&password=' + str(pas)).ok:
-                    print "Login successfully"
+                print('session expired')
+                raise SessionExpiredException()
+
+        except(FileNotFoundError, SessionExpiredException):
+            self.ses = requests.session()
+            self.ses.headers.update({
+                'Proxy-Connection': 'keep-alive',
+                'Accept': '*/*',
+                'Origin': 'http://www.way2sms.com',
+                'X-Requested-With': 'XMLHttpRequest',
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.53 Safari/537.36',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Referer': 'http://www.way2sms.com/',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Host': 'www.way2sms.com'
+            })
+            import os
+            while True:
+                usr = os.getenv('WAY2SMS_MOBILE')
+                if not usr:
+                    usr = str(input('Enter your mobile number:'))
+                pas = os.getenv('WAY2SMS_PASSWORD')
+                if not pas:
+                    pas = getpass()
+                if self.ses.post('http://www.way2sms.com/re-login',
+                                 data={
+                                     'mobileNo': usr,
+                                     'password': pas,
+                                     'CatType': '',
+                                     'redirectPage': '',
+                                     'pid': '',
+                                 }
+                                 ).text == 'send-sms':
+                    print("Login successfully")
                     self.token = self.ses.cookies['JSESSIONID']
                     self.token = self.token[4:]
-                    with open('.token', 'w') as Token:
-                        pickle.dump((self.ses, self.token, self.new_url), Token)
+                    with open('.token', 'wb') as Token:
+                        pickle.dump((self.ses, self.token), Token)
+                    break
                 else:
-                    print "Login failed"
+                    print("Login failed")
+            del os
 
-        else:
-            response = requests.head(url, allow_redirects=True)
-            self.new_url = response.url
-            self.ses = requests.session()
-            self.ses.headers.update({'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Cache-Control': 'no-cache',
-                                     'Upgrade-Insecure-Requests': '1',
-                                     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36',
-                                     'Content-Type': 'application/x-www-form-urlencoded',
-                                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                                     'DNT': '1', 'Accept-Encoding': 'gzip, deflate',
-                                     'Accept-Language': 'en-US,en;q=0.8'})
-            usr = str(raw_input('Enter your mobile number:'))
-            pas = getpass.getpass()
-            if self.ses.post(self.new_url + 'Login1.action', 'username=' + str(usr) + '&password=' + str(pas)).ok:
-                print "Login successfully"
-                self.token = self.ses.cookies['JSESSIONID']
-                self.token = self.token[4:]
-                with open('.token', 'w') as Token:
-                    pickle.dump((self.ses, self.token, self.new_url), Token)
-            else:
-                print "Login failed"
+    def checkwebmsgcount(self):
+        return int(self.ses.post(url+'/CheckWebMsgCount', data={'type': 'sender'}).text)
 
-    def sms(self, **kwargs):
-        if 'mobile' not in kwargs:
-            mobile = str(raw_input('Send sms to: '))
-        else:
-            mobile = kwargs['mobile']
-        if 'string' not in kwargs:
-            string = str(raw_input('Enter TEXT SMS: '))
-        else:
-            string = kwargs['string']
-        if type(mobile) is str:
+    def sms(self, mobile=None, text=None):
+        if mobile is None:
+            mobile = str(input('Send sms to: '))
+
+        if text is None:
+            text = str(input('Enter TEXT SMS: '))
+
+        if type(mobile) is str or type(mobile) is int:
             mobile = list(str(mobile).split(','))
+
         if type(mobile) is list:
             for mobile_no in mobile:
-                if len(mobile_no) is not 10:
-                    print mobile_no, 'is not valid'
+                if len(str(mobile_no)) is not 10:
+                    print(mobile_no, 'is not valid')
                 else:
-                    lofstr = textwrap.wrap(string, 140)
-                    for string in lofstr:
-                        msglen = len(string)
-                        qstring = urllib.quote(string)
-                        page = self.ses.post(self.new_url+'smstoss.action', 'ssaction=ss&Token='+str(self.token)+'&mobile='+str(mobile_no)+'&message='+qstring+'&msgLen='+str(140-msglen)).text
-                        print 'Sending SMS to', mobile_no,
-                        for dot in range(3):
-                            print '.',
-                            time.sleep(1)
-                        if "Rejected : Can't submit your message, finished your day quota." not in page:
-                            if self.successfully_sent(mobile_no, string):
-                                print 'sent successfully.'
-                            else:
-                                print 'failed to send.'
+                    lofstr = textwrap.wrap(text, 140)
+                    for text in lofstr:
+                        page = self.ses.post('http://www.way2sms.com/smstoss',
+                                             data={
+                                                 'Token': self.token,
+                                                 'message': text,
+                                                 'toMobile': mobile_no,
+                                                 'ssaction': 'undefined',
+                                                 'senderId': 'WAYSMS',
+                                             }
+                                             ).text
+                        print('Sending SMS to', mobile_no)
+                        if not int(page):
+                            print('sent successfully.')
                         else:
-                            print 'quota finished!'
+                            print('You Have Exceeded the daily free SMS Limit. you can now send unlimited messages '
+                                  'through our Services with only 20 Paise per messages , start using by topping up '
+                                  'your wallet with min of "500/-" Only ')
                             sys.exit(1)
 
     def history(self, day):
-        date = (datetime.date.today() - datetime.timedelta(days=int(day))).strftime('%d/%m/%Y')
-        page = self.ses.post(self.new_url+'sentSMS.action?dt='+str(date)+'&Token='+str(self.token))
+        date = (datetime.date.today() - datetime.timedelta(days=int(day))).strftime('%Y-%m-%d')
+        page = self.ses.post(url + '/sent-sms',
+                             data={
+                                 'pageNo': 0,
+                                 'dt': str(date),
+                                 'sType': 1,
+                             })
         soup = BeautifulSoup(page.text, 'html.parser')
-        part = soup.find_all('div', {'class': 'mess'})
-        print 'SMS history for date:', date
+        part = soup.find('div', {'class': 'sent-list msgs-doc'})
+        print('SMS history for date:', date)
         table = PrettyTable(hrules=ALL)
         table.field_names = ['Time', 'Mobile no', 'SMS']
-        for div in part:
-            t = div.find('p', {'class': 'time'})
+        for div in part.find_all('li'):
+            t = div.find('div', {'class': 'dtm'})
             time = t.find('span').text
-            no = div.find('b').text
-            divrb = div.find('div', {'class': 'rb'})
-            p = divrb.find('p').text
+            no = div.find('div', {'class': 'ctn-usr'}).text
+            p = div.find('p').text
             table.add_row([time, no, p])
-        print table
-
-    def successfully_sent(self, mobile, text):
-        date = datetime.date.today().strftime('%d/%m/%Y')
-        page = self.ses.post(self.new_url + 'sentSMS.action?dt=' + str(date) + '&Token=' + str(self.token))
-        soup = BeautifulSoup(page.text, 'html.parser')
-        first = soup.find('div', {'class': 'mess'})
-        no = str(first.find('b').text)
-        divrb = first.find('div', {'class': 'rb'})
-        p = str(divrb.find('p').text)
-        if (no == mobile) and (p == text):
-            return True
-        else:
-            return False
+        print(table)
 
     def logout(self):
-        self.ses.get(self.new_url+'main.action')
+        self.ses.get('http://www.way2sms.com/Logout')
         try:
             os.remove('.token')
         finally:
-            print 'Log-out!'
+            print('Log-out!')
             sys.exit(0)
 
-    def check_limit(self):
-        date = datetime.date.today().strftime('%d/%m/%Y')
-        page = self.ses.post(self.new_url + 'sentSMS.action?dt=' + str(date) + '&Token=' + str(self.token))
-        soup = BeautifulSoup(page.text, 'html.parser')
-        sms = len(soup.find_all('div', {'class': 'mess'}))
-        print 'You have {} sms left.'.format(100 - sms)
+    # http://www.way2sms.com/addContact
+    def addContact(self, mobile, name: str, gender: str):
+        return self.ses.post('http://www.way2sms.com/addContact', {'contno': mobile,
+                                                                   'contname': name,
+                                                                   'gender': gender.capitalize(),
+                                                                   'groupid': 0,
+                                                                   'token': self.token
+                                                                   }).text
+
+    def getcontact(self):
+        _ = self.ses.get('http://www.way2sms.com/getContacts', params={'token': self.token}).json()
+        _['contacts'] = json.loads(_['contacts'])
+        return _
+
+    def groupcontect(self):
+        return self.ses.post('http://www.way2sms.com/GroupContacts').json()
+
 
 if __name__ == '__main__':
-    Way2sms().sms()
-    # Way2sms().check_limit()
-    # Way2sms().history(13)
+    w = Way2sms()
+    # w.sms(mobile=9876543210, text='Demo text message from cmd')
+    # w.history(0)
+    # w.logout()
